@@ -1,67 +1,115 @@
-import dlib
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
 import cv2
-from collections import deque
-from statistics import mode
+import numpy as np
 
-def main():
-    detector = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+# Funcție pentru calcularea distanței Euclidiene
+def euclidean(img1, img2):
+    return np.linalg.norm(img1 - img2)
 
-    cap = cv2.VideoCapture(0)
-    cv2.namedWindow("Emotions Live", cv2.WINDOW_NORMAL)
+# Pragul de distanță pentru a considera semnătura autentică
+THRESHOLD = 10000  # Ajustabil
 
-    # Ultimele 5 predicții pentru stabilizare
-    recent_emotions = deque(maxlen=5)
+class SignatureApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Signature Recognition")
+        self.root.geometry("800x600")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        # Directorul bazei de date
+        self.database_dir = "Baza de date"
+        if not os.path.exists(self.database_dir):
+            os.makedirs(self.database_dir)
 
-        frame = cv2.resize(frame, (640, 480))
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = detector(gray, 0)
+        # Elemente ale interfeței
+        self.setup_ui()
 
-        detected_emotion = "Detecting..."
+    def setup_ui(self):
+        # Cadru pentru butoane
+        button_frame = tk.Frame(self.root)
+        button_frame.pack(pady=10)
 
-        for face in faces:
-            landmarks = predictor(gray, face)
-            points = [(landmarks.part(i).x, landmarks.part(i).y) for i in range(68)]
+        # Butoane funcționale
+        load_button = tk.Button(button_frame, text="Încarcă Semnătură", command=self.load_signature)
+        load_button.grid(row=0, column=0, padx=10)
 
-            for x, y in points:
-                cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
+        add_button = tk.Button(button_frame, text="Adaugă Multiple Semnături în Baza de Date", command=self.add_multiple_to_database)
+        add_button.grid(row=0, column=1, padx=10)
 
-            try:
-                ref_length = points[9][1] - points[28][1]
-                if ref_length <= 0:
-                    continue
+        recognize_button = tk.Button(button_frame, text="Recunoaște Semnătură", command=self.recognize_signature)
+        recognize_button.grid(row=0, column=2, padx=10)
 
-                mouth_open = (points[58][1] - points[52][1]) / ref_length
-                eye_openness = (points[42][1] - points[38][1]) / ref_length
+        delete_button = tk.Button(button_frame, text="Șterge Semnătură", command=self.delete_from_database)
+        delete_button.grid(row=0, column=3, padx=10)
 
-                if mouth_open > 0.28:
-                    detected_emotion = "Happy Face"
-                elif mouth_open < 0.22 and eye_openness < 0.085:
-                    detected_emotion = "Angry Face"
+        # Etichetă pentru status
+        self.status_label = tk.Label(self.root, text="Status: Aștept acțiunea utilizatorului...", bg="white", anchor="w")
+        self.status_label.pack(fill="x", pady=10)
+
+    def load_signature(self):
+        # Încarcă o imagine
+        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
+        if file_path:
+            self.status_label.config(text="Semnătura încărcată.")
+            self.current_image_path = file_path
+        else:
+            messagebox.showerror("Eroare", "Nu s-a selectat nicio semnătură!")
+
+    def add_multiple_to_database(self):
+        # Adaugă multiple imagini în baza de date
+        file_paths = filedialog.askopenfilenames(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
+        if file_paths:
+            for file_path in file_paths:
+                file_name = os.path.basename(file_path)
+                dest_path = os.path.join(self.database_dir, file_name)
+                if not os.path.exists(dest_path):
+                    os.rename(file_path, dest_path)
                 else:
-                    detected_emotion = "Neutral Face"
+                    messagebox.showinfo("Info", f"Semnătura {file_name} există deja.")
+            self.status_label.config(text="Semnături adăugate în baza de date.")
+        else:
+            messagebox.showerror("Eroare", "Nu s-au selectat semnături!")
 
-                recent_emotions.append(detected_emotion)
-                stable_emotion = mode(recent_emotions)
+    def delete_from_database(self):
+        # Șterge o imagine din baza de date
+        file_path = filedialog.askopenfilename(initialdir=self.database_dir, filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
+        if file_path:
+            os.remove(file_path)
+            self.status_label.config(text=f"Semnătura {os.path.basename(file_path)} a fost ștearsă.")
+        else:
+            messagebox.showerror("Eroare", "Nu s-a selectat nicio semnătură pentru ștergere!")
 
-                cv2.putText(frame, stable_emotion, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    def preprocess_image(self, image_path):
+        # Preprocesare imagine
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        image = cv2.resize(image, (200, 100))  # Uniformizare dimensiuni
+        return image
 
-            except Exception as e:
-                print("Eroare:", e)
+    def recognize_signature(self):
+        # Recunoaște semnătura încărcată comparativ cu baza de date
+        if hasattr(self, 'current_image_path'):
+            input_signature = self.preprocess_image(self.current_image_path)
+            min_distance = float('inf')
+            recognized_person = None
 
-        cv2.imshow("Emotions Live", frame)
+            for file_name in os.listdir(self.database_dir):
+                db_signature_path = os.path.join(self.database_dir, file_name)
+                db_signature = self.preprocess_image(db_signature_path)
+                distance = euclidean(input_signature, db_signature)
+                if distance < min_distance:
+                    min_distance = distance
+                    recognized_person = file_name
 
-        key = cv2.waitKey(1)
-        if key == 27 or cv2.getWindowProperty("Emotions Live", cv2.WND_PROP_VISIBLE) < 1:
-            break
+            if min_distance < THRESHOLD:
+                self.status_label.config(text=f"Semnătura autentică: {recognized_person}")
+            else:
+                self.status_label.config(text="Semnătura este falsă.")
+        else:
+            messagebox.showerror("Eroare", "Nu s-a încărcat nicio semnătură!")
 
-    cap.release()
-    cv2.destroyAllWindows()
-
-if __name__ == '__main__':
-    main()
+# Initializare aplicație
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SignatureApp(root)
+    root.mainloop()
